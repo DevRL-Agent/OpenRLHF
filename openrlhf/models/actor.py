@@ -5,7 +5,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import LoraLayer
-from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig, AutoConfig
 from transformers.integrations.deepspeed import HfDeepSpeedConfig
 
 from .ring_attn_utils import convert_ring_attn_params
@@ -69,6 +69,26 @@ class Actor(nn.Module):
                 )
             else:
                 nf4_config = None
+            
+            model_kwargs = {}
+            if kwargs.get("max_length", None):
+                # if we potentially extend the model context window
+
+                # check if rope scaling is needed
+                model_config = AutoConfig.from_pretrained(pretrain_or_model)
+                # If we extend the max_length, we need to set model_max_length for tokenizer
+                model_max_seq_length = model_config.max_position_embeddings
+                max_length = kwargs.get("max_length")
+                use_rope_scaling = max_length > model_max_seq_length
+                if use_rope_scaling:
+                    rope_scaling = {
+                        "factor": 4.0,
+                        "original_max_position_embeddings": 32768,
+                        "type": "yarn"
+                    }
+                    from termcolor import colored
+                    print(colored(f"use_rope_scaling: {rope_scaling}", "magenta"))
+                    model_kwargs["rope_scaling"] = rope_scaling
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 pretrain_or_model,
@@ -77,6 +97,7 @@ class Actor(nn.Module):
                 quantization_config=nf4_config,
                 torch_dtype=torch.bfloat16 if bf16 else "auto",
                 device_map=device_map,
+                **model_kwargs,
             )
 
             # LoRA
