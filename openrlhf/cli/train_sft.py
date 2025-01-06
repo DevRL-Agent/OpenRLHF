@@ -29,9 +29,10 @@ def train(args):
         lora_dropout=args.lora_dropout,
         ds_config=strategy.get_ds_train_config(is_actor=True),
         packing_samples=args.packing_samples,
+        max_length=args.max_len,
     )
     # configure tokenizer
-    tokenizer = get_tokenizer(args.pretrain, model.model, "right", strategy, use_fast=not args.disable_fast_tokenizer)
+    tokenizer = get_tokenizer(args.pretrain, model.model, "right", strategy, use_fast=not args.disable_fast_tokenizer, max_length=args.max_len)
     strategy.print(model)
 
     # gradient_checkpointing
@@ -63,6 +64,7 @@ def train(args):
         pretrain_mode=args.pretrain_mode,
         input_template=args.input_template,
         multiple_of=args.ring_attn_size,
+        num_processors=1
     )
     eval_dataset = SFTDataset(
         eval_data,
@@ -72,6 +74,7 @@ def train(args):
         pretrain_mode=args.pretrain_mode,
         input_template=args.input_template,
         multiple_of=args.ring_attn_size,
+        num_processors=1
     )
 
     # prepare dataloader
