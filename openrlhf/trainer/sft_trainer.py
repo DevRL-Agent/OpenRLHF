@@ -134,6 +134,8 @@ class SFTTrainer(ABC):
                     inputs = inputs.to(torch.cuda.current_device()).squeeze(1)
                     attention_mask = attention_masks.to(torch.cuda.current_device()).squeeze(1)
 
+                print("inputs", inputs.shape)
+
                 if self.strategy.ring_attn_group is None:
                     output = self.model(inputs, attention_mask=attention_mask, return_output=True)
                 else:
