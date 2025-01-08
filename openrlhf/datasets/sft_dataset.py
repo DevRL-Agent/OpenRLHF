@@ -105,7 +105,7 @@ class SFTDataset(Dataset):
         )
         if not self.pretrain_mode:
             prompt_token = self.tokenizer(
-                prompt[0] if isinstance(prompt, tuple) else prompt,
+                prompt,
                 max_length=self.max_length,
                 padding=False,
                 truncation=True,
@@ -121,7 +121,7 @@ class SFTDataset(Dataset):
             prompt_ids_len = 0
 
         return {
-            "prompt": prompt[0] if isinstance(prompt, tuple) else prompt,
+            "prompt": prompt,
             "response": response,
             "prompt_ids_len": prompt_ids_len,
             "assistant_mask": assistant_mask
