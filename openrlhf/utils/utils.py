@@ -1,7 +1,7 @@
 import os
 
 from datasets import interleave_datasets, load_dataset, load_from_disk
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 
 DEFAULT_PAD_TOKEN = "[PAD]"
@@ -10,8 +10,17 @@ DEFAULT_BOS_TOKEN = "<s>"
 DEFAULT_UNK_TOKEN = "<unk>"
 
 
-def get_tokenizer(pretrain, model, padding_side="left", strategy=None, use_fast=True):
-    tokenizer = AutoTokenizer.from_pretrained(pretrain, trust_remote_code=True, use_fast=use_fast)
+def get_tokenizer(pretrain, model, padding_side="left", strategy=None, use_fast=True, max_length=None):
+    model_config = AutoConfig.from_pretrained(pretrain)
+    # If we extend the max_length, we need to set model_max_length for tokenizer
+    model_max_seq_length = model_config.max_position_embeddings
+    max_position_embeddings = max(max_length, model_max_seq_length)
+    if max_position_embeddings > model_max_seq_length:
+        from termcolor import colored
+        print(colored(f"max_position_embeddings {max_position_embeddings} > model_max_seq_length {model_max_seq_length}, update model_max_length for tokenizer", "magenta"))
+    else:
+        print(colored(f"max_position_embeddings {max_position_embeddings} <= model_max_seq_length {model_max_seq_length}, do not update model_max_length for tokenizer", "magenta"))
+    tokenizer = AutoTokenizer.from_pretrained(pretrain, trust_remote_code=True, use_fast=use_fast, model_max_length=max_position_embeddings)
     tokenizer.padding_side = padding_side
     # NOTE: When enable vLLM, do not resize_token_embeddings, or the vocab size will mismatch with vLLM.
     # https://github.com/facebookresearch/llama-recipes/pull/196
@@ -19,7 +28,6 @@ def get_tokenizer(pretrain, model, padding_side="left", strategy=None, use_fast=
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
         model.config.pad_token_id = tokenizer.pad_token_id
-
     return tokenizer
 
 

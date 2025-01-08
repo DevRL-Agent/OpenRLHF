@@ -5,7 +5,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import LoraLayer
-from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig, AutoConfig
 from transformers.integrations.deepspeed import HfDeepSpeedConfig
 
 from .ring_attn_utils import convert_ring_attn_params
@@ -14,12 +14,22 @@ from .utils import log_probs_from_logits, reset_position_ids
 
 class Actor(nn.Module):
     """
-    Actor model base class.
+    Base class for Actor models in reinforcement learning.
+
+    This class serves as a foundation for implementing various actor models, which are responsible for selecting actions based on the policy learned from the environment.
 
     Args:
-        model (nn.Module): Actor Model.
-        lora_rank (int): LoRA rank.
-        lora_train_bias (str): LoRA bias training mode.
+        pretrain_or_model (nn.Module): A pretrained model or a new model instance to be used as the actor.
+        use_flash_attention_2 (bool, optional): Whether to utilize Flash Attention 2.0 for improved performance. Defaults to False.
+        bf16 (bool, optional): Enable bfloat16 precision for model computations. Defaults to True.
+        load_in_4bit (bool, optional): Load the model in 4-bit precision. Defaults to False.
+        lora_rank (int, optional): Rank for LoRA adaptation. Defaults to 0.
+        lora_alpha (int, optional): Alpha parameter for LoRA. Defaults to 16.
+        lora_dropout (float, optional): Dropout rate for LoRA layers. Defaults to 0.
+        target_modules (list, optional): List of target modules for applying LoRA. Defaults to None.
+        ds_config (dict, optional): Configuration for DeepSpeed, enabling model partitioning across multiple GPUs. Defaults to None.
+        device_map (dict, optional): Device mapping for loading the model onto specific devices. Defaults to None.
+        packing_samples (bool, optional): Whether to pack samples during training. Defaults to False.
     """
 
     def __init__(
@@ -59,6 +69,26 @@ class Actor(nn.Module):
                 )
             else:
                 nf4_config = None
+            
+            model_kwargs = {}
+            if kwargs.get("max_length", None):
+                # if we potentially extend the model context window
+
+                # check if rope scaling is needed
+                model_config = AutoConfig.from_pretrained(pretrain_or_model)
+                # If we extend the max_length, we need to set model_max_length for tokenizer
+                model_max_seq_length = model_config.max_position_embeddings
+                max_length = kwargs.get("max_length")
+                use_rope_scaling = max_length > model_max_seq_length
+                if use_rope_scaling:
+                    rope_scaling = {
+                        "factor": 4.0,
+                        "original_max_position_embeddings": 32768,
+                        "type": "yarn"
+                    }
+                    from termcolor import colored
+                    print(colored(f"use_rope_scaling: {rope_scaling}", "magenta"))
+                    model_kwargs["rope_scaling"] = rope_scaling
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 pretrain_or_model,
@@ -67,6 +97,7 @@ class Actor(nn.Module):
                 quantization_config=nf4_config,
                 torch_dtype=torch.bfloat16 if bf16 else "auto",
                 device_map=device_map,
+                **model_kwargs,
             )
 
             # LoRA
@@ -183,17 +214,21 @@ class Actor(nn.Module):
         if not self.packing_samples:
             # https://github.com/OpenRLHF/OpenRLHF/issues/217
             position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
         else:
+            # convert attention_mask to position_ids
             if ring_attn_group is not None:
                 sequences, attention_mask, position_ids = convert_ring_attn_params(
                     sequences, attention_mask, packed_seq_lens, ring_attn_group
                 )
             else:
-                # reset the positions for packed samples
                 position_ids = reset_position_ids(attention_mask)
-        position_ids.masked_fill_(attention_mask == 0, 1)
+            # explicitly ignore attention_mask for packing_samples
+            attention_mask = None
 
         output = self.model(sequences, attention_mask=attention_mask, position_ids=position_ids)
+        # https://github.com/OpenRLHF/OpenRLHF/pull/634
+        output["logits"] = output["logits"].to(torch.float32)
 
         if num_actions is None:
             assert return_output

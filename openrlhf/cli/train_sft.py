@@ -29,9 +29,10 @@ def train(args):
         lora_dropout=args.lora_dropout,
         ds_config=strategy.get_ds_train_config(is_actor=True),
         packing_samples=args.packing_samples,
+        max_length=args.max_len,
     )
     # configure tokenizer
-    tokenizer = get_tokenizer(args.pretrain, model.model, "right", strategy, use_fast=not args.disable_fast_tokenizer)
+    tokenizer = get_tokenizer(args.pretrain, model.model, "right", strategy, use_fast=not args.disable_fast_tokenizer, max_length=args.max_len)
     strategy.print(model)
 
     # gradient_checkpointing
@@ -64,6 +65,7 @@ def train(args):
         input_template=args.input_template,
         multiple_of=args.ring_attn_size,
         multiturn=args.multiturn,
+        num_processors=1
     )
     eval_dataset = SFTDataset(
         eval_data,
@@ -74,6 +76,7 @@ def train(args):
         input_template=args.input_template,
         multiple_of=args.ring_attn_size,
         multiturn=args.multiturn,
+        num_processors=1
     )
 
     # prepare dataloader
@@ -162,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--adam_offload", action="store_true", default=False, help="Offload Adam Optimizer")
     parser.add_argument("--flash_attn", action="store_true", default=False, help="Enable FlashAttention2")
     parser.add_argument("--grad_accum_dtype", type=str, default=None, help="Adam grad accum data type")
-    parser.add_argument("--disable_trace_cache", action="store_true", default=False)
+    parser.add_argument("--overlap_comm", action="store_true", default=False)
     parser.add_argument("--gradient_checkpointing_use_reentrant", action="store_true", default=False)
     parser.add_argument("--disable_fast_tokenizer", action="store_true", default=False)
 
@@ -250,5 +253,5 @@ if __name__ == "__main__":
 
     if args.ring_attn_size > 1:
         assert args.packing_samples, "packing_samples must be enabled when using ring attention"
-    
+
     train(args)
