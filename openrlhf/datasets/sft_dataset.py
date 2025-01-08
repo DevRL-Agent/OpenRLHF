@@ -101,9 +101,11 @@ class SFTDataset(Dataset):
             multiturn=getattr(self.strategy.args, "multiturn", False),
         )
         if not self.pretrain_mode:
-            # Get assistant mask during tokenization if needed
+            # Get assistant mask during tokenization if multiturn
             assistant_mask = None
-            if self.apply_chat_template:
+            multiturn = getattr(self.strategy.args, "multiturn", False)
+            if multiturn:
+                assert self.apply_chat_template, "apply_chat_template must be enabled when using multiturn format"
                 # Re-apply templates with tokenization to get masks
                 prompt_with_mask = self.apply_chat_template(data[self.input_key], tokenize=True, add_generation_prompt=True, return_assistant_tokens_mask=True)
                 full_with_mask = self.apply_chat_template(data[self.input_key] + (data[self.output_key] or []), tokenize=True, return_assistant_tokens_mask=True)
