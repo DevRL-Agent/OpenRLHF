@@ -7,18 +7,24 @@ from torch.utils.data import Dataset
 from .utils import zero_pad_sequences
 
 
-def preprocess_data(data, input_template=None, input_key="input", output_key=None, apply_chat_template=None):
+def preprocess_data(data, input_template=None, input_key="input", output_key=None, apply_chat_template=None, multiturn=False):
     if apply_chat_template:
         if output_key:
             prompt_message = data[input_key]
             response_message = data[output_key]
 
-            if isinstance(prompt_message, str) and isinstance(response_message, str):
+            if multiturn:
+                # When multiturn is enabled, enforce strict format requirements
+                assert not isinstance(prompt_message, str), "With multiturn enabled, prompt_message must be a list of dictionaries"
+                assert response_message is None or response_message == "", "With multiturn enabled, response_message must be None or empty"
+                assert output_key is None, "With multiturn enabled, output_key must be None"
+            elif isinstance(prompt_message, str) and isinstance(response_message, str):
+                # Convert single-turn format to chat format
                 prompt_message = [{"role": "user", "content": prompt_message}]
                 response_message = [{"role": "assistant", "content": response_message}]
 
             prompt = apply_chat_template(prompt_message, tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
-            full_response = apply_chat_template(prompt_message + response_message, tokenize=False, return_assistant_tokens_mask=True)
+            full_response = apply_chat_template(prompt_message + (response_message or []), tokenize=False, return_assistant_tokens_mask=True)
             response = full_response[0][len(prompt[0]):]
             assistant_mask = full_response[1][len(prompt[0]):]
         else:
@@ -95,6 +101,7 @@ class SFTDataset(Dataset):
             self.input_key,
             self.output_key,
             apply_chat_template=None if self.pretrain_mode else self.apply_chat_template,
+            multiturn=getattr(self.strategy.args, "multiturn", False),
         )
         if not self.pretrain_mode:
             prompt_token = self.tokenizer(
