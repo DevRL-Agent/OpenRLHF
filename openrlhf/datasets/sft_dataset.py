@@ -23,23 +23,20 @@ def preprocess_data(data, input_template=None, input_key="input", output_key=Non
                 prompt_message = [{"role": "user", "content": prompt_message}]
                 response_message = [{"role": "assistant", "content": response_message}]
 
-            prompt = apply_chat_template(prompt_message, tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
-            full_response = apply_chat_template(prompt_message + (response_message or []), tokenize=False, return_assistant_tokens_mask=True)
-            response = full_response[0][len(prompt):]
-            assistant_mask = full_response[1][len(prompt):]
+            prompt = apply_chat_template(prompt_message, tokenize=False, add_generation_prompt=True)
+            full_response = apply_chat_template(prompt_message + (response_message or []), tokenize=False)
+            response = full_response[len(prompt):]
         else:
-            prompt = apply_chat_template(data[input_key][:-1], tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
-            full_response = apply_chat_template(data[input_key], tokenize=False, return_assistant_tokens_mask=True)
-            response = full_response[0][len(prompt):]
-            assistant_mask = full_response[1][len(prompt):]
+            prompt = apply_chat_template(data[input_key][:-1], tokenize=False, add_generation_prompt=True)
+            full_response = apply_chat_template(data[input_key], tokenize=False)
+            response = full_response[len(prompt):]
     else:
         prompt = data[input_key]
         if input_template:
             prompt = input_template.format(prompt)
         # output_key is None for continue pretrain
         response = data[output_key] if output_key else ""
-        assistant_mask = None
-    return prompt, response, assistant_mask
+    return prompt, response
 
 
 class SFTDataset(Dataset):
@@ -95,7 +92,7 @@ class SFTDataset(Dataset):
         self.assistant_masks = processed_dataset["assistant_mask"]
 
     def process_data(self, data):
-        prompt, response, assistant_mask = preprocess_data(
+        prompt, response = preprocess_data(
             data,
             None if self.pretrain_mode else self.input_template,
             self.input_key,
@@ -104,6 +101,14 @@ class SFTDataset(Dataset):
             multiturn=getattr(self.strategy.args, "multiturn", False),
         )
         if not self.pretrain_mode:
+            # Get assistant mask during tokenization if needed
+            assistant_mask = None
+            if self.apply_chat_template:
+                # Re-apply templates with tokenization to get masks
+                prompt_with_mask = self.apply_chat_template(data[self.input_key], tokenize=True, add_generation_prompt=True, return_assistant_tokens_mask=True)
+                full_with_mask = self.apply_chat_template(data[self.input_key] + (data[self.output_key] or []), tokenize=True, return_assistant_tokens_mask=True)
+                assistant_mask = full_with_mask[1][len(prompt_with_mask[1]):]
+
             prompt_token = self.tokenizer(
                 prompt,
                 max_length=self.max_length,
@@ -119,6 +124,7 @@ class SFTDataset(Dataset):
                 prompt = None
         else:
             prompt_ids_len = 0
+            assistant_mask = None
 
         return {
             "prompt": prompt,
