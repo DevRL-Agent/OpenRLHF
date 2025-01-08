@@ -158,14 +158,20 @@ class SFTTrainer(ABC):
                     aux_loss = 0
 
                 if not self.pretrain_mode:
-                    if self.packing_samples:
-                        index = 0
-                        for input_length, source_len in zip(infos["input_length"], prompt_id_lens):
-                            labels[0][index : index + source_len] = self.loss_fn.IGNORE_INDEX
-                            index += input_length
+                    if "assistant_mask" in infos and len(infos["assistant_mask"]) > 0:
+                        # Use assistant mask to identify which tokens to train on
+                        assistant_mask = infos["assistant_mask"].to(labels.device)
+                        labels = torch.where(assistant_mask.bool(), labels, self.loss_fn.IGNORE_INDEX)
                     else:
-                        for label, source_len in zip(labels, prompt_id_lens):
-                            label[:source_len] = self.loss_fn.IGNORE_INDEX
+                        # Fall back to old behavior if no assistant mask available
+                        if self.packing_samples:
+                            index = 0
+                            for input_length, source_len in zip(infos["input_length"], prompt_id_lens):
+                                labels[0][index : index + source_len] = self.loss_fn.IGNORE_INDEX
+                                index += input_length
+                        else:
+                            for label, source_len in zip(labels, prompt_id_lens):
+                                label[:source_len] = self.loss_fn.IGNORE_INDEX
 
                 gpt_loss = self.loss_fn(output.logits, labels)
                 loss = gpt_loss + aux_loss * self.args.aux_loss_coef
@@ -264,14 +270,20 @@ class SFTTrainer(ABC):
                 )
 
                 if not self.pretrain_mode:
-                    if self.packing_samples:
-                        index = 0
-                        for input_length, source_len in zip(infos["input_length"], prompt_id_lens):
-                            labels[0][index : index + source_len] = self.loss_fn.IGNORE_INDEX
-                            index += input_length
+                    if "assistant_mask" in infos and len(infos["assistant_mask"]) > 0:
+                        # Use assistant mask to identify which tokens to train on
+                        assistant_mask = infos["assistant_mask"].to(labels.device)
+                        labels = torch.where(assistant_mask.bool(), labels, self.loss_fn.IGNORE_INDEX)
                     else:
-                        for label, source_len in zip(labels, prompt_id_lens):
-                            label[:source_len] = self.loss_fn.IGNORE_INDEX
+                        # Fall back to old behavior if no assistant mask available
+                        if self.packing_samples:
+                            index = 0
+                            for input_length, source_len in zip(infos["input_length"], prompt_id_lens):
+                                labels[0][index : index + source_len] = self.loss_fn.IGNORE_INDEX
+                                index += input_length
+                        else:
+                            for label, source_len in zip(labels, prompt_id_lens):
+                                label[:source_len] = self.loss_fn.IGNORE_INDEX
 
                 loss = self.loss_fn(output.logits, labels)
 

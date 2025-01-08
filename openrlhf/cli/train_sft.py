@@ -64,6 +64,7 @@ def train(args):
         pretrain_mode=args.pretrain_mode,
         input_template=args.input_template,
         multiple_of=args.ring_attn_size,
+        multiturn=args.multiturn,
         num_processors=1
     )
     eval_dataset = SFTDataset(
@@ -74,6 +75,7 @@ def train(args):
         pretrain_mode=args.pretrain_mode,
         input_template=args.input_template,
         multiple_of=args.ring_attn_size,
+        multiturn=args.multiturn,
         num_processors=1
     )
 
@@ -214,6 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer_chat_template", type=str, default=None)
     parser.add_argument("--max_samples", type=int, default=1e8, help="Max number of samples")
     parser.add_argument("--max_len", type=int, default=2048, help="Max tokens for the samples")
+    parser.add_argument("--multiturn", action="store_true", default=False, help="Enable multi-turn conversation support")
 
     # wandb parameters
     parser.add_argument("--use_wandb", type=str, default=None)
@@ -230,6 +233,9 @@ if __name__ == "__main__":
     parser.add_argument("--use_tensorboard", type=str, default=None, help="TensorBoard logging path")
 
     args = parser.parse_args()
+
+    if args.multiturn:
+        assert args.apply_chat_template, "apply_chat_template must be enabled when using multiturn format"
 
     if args.input_template and "{}" not in args.input_template:
         print("[Warning] {} not in args.input_template, set to None")

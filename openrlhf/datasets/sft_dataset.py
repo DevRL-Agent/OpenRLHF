@@ -17,18 +17,23 @@ def preprocess_data(data, input_template=None, input_key="input", output_key=Non
                 prompt_message = [{"role": "user", "content": prompt_message}]
                 response_message = [{"role": "assistant", "content": response_message}]
 
-            prompt = apply_chat_template(prompt_message, tokenize=False, add_generation_prompt=True)
-            response = apply_chat_template(prompt_message + response_message, tokenize=False)[len(prompt) :]
+            prompt = apply_chat_template(prompt_message, tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
+            full_response = apply_chat_template(prompt_message + response_message, tokenize=False, return_assistant_tokens_mask=True)
+            response = full_response[0][len(prompt[0]):]
+            assistant_mask = full_response[1][len(prompt[0]):]
         else:
-            prompt = apply_chat_template(data[input_key][:-1], tokenize=False, add_generation_prompt=True)
-            response = apply_chat_template(data[input_key], tokenize=False)[len(prompt) :]
+            prompt = apply_chat_template(data[input_key][:-1], tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
+            full_response = apply_chat_template(data[input_key], tokenize=False, return_assistant_tokens_mask=True)
+            response = full_response[0][len(prompt[0]):]
+            assistant_mask = full_response[1][len(prompt[0]):]
     else:
         prompt = data[input_key]
         if input_template:
             prompt = input_template.format(prompt)
         # output_key is None for continue pretrain
         response = data[output_key] if output_key else ""
-    return prompt, response
+        assistant_mask = None
+    return prompt, response, assistant_mask
 
 
 class SFTDataset(Dataset):
@@ -81,9 +86,10 @@ class SFTDataset(Dataset):
         self.prompts = processed_dataset["prompt"]
         self.responses = processed_dataset["response"]
         self.prompt_ids_lens = processed_dataset["prompt_ids_len"]
+        self.assistant_masks = processed_dataset["assistant_mask"]
 
     def process_data(self, data):
-        prompt, response = preprocess_data(
+        prompt, response, assistant_mask = preprocess_data(
             data,
             None if self.pretrain_mode else self.input_template,
             self.input_key,
@@ -92,7 +98,7 @@ class SFTDataset(Dataset):
         )
         if not self.pretrain_mode:
             prompt_token = self.tokenizer(
-                prompt,
+                prompt[0] if isinstance(prompt, tuple) else prompt,
                 max_length=self.max_length,
                 padding=False,
                 truncation=True,
@@ -107,7 +113,12 @@ class SFTDataset(Dataset):
         else:
             prompt_ids_len = 0
 
-        return {"prompt": prompt, "response": response, "prompt_ids_len": prompt_ids_len}
+        return {
+            "prompt": prompt[0] if isinstance(prompt, tuple) else prompt,
+            "response": response,
+            "prompt_ids_len": prompt_ids_len,
+            "assistant_mask": assistant_mask
+        }
 
     def __len__(self):
         length = len(self.prompts)
@@ -138,7 +149,12 @@ class SFTDataset(Dataset):
             # to avoid EOS_token truncation
             input_token["input_ids"][0][-1] = self.tokenizer.eos_token_id
             input_token["attention_mask"][0][-1] = True
-        info = {"input": prompt, "output": response, "input_length": input_token["attention_mask"].int().sum().item()}
+        info = {
+            "input": prompt,
+            "output": response,
+            "input_length": input_token["attention_mask"].int().sum().item(),
+            "assistant_mask": self.assistant_masks[idx] if self.assistant_masks is not None else None
+        }
 
         return prompt_ids_len, input_token["input_ids"], input_token["attention_mask"], info
 
@@ -146,7 +162,7 @@ class SFTDataset(Dataset):
         prompt_ids_lens = []
         input_ids = []
         attention_masks = []
-        infos = {"input": [], "output": []}
+        infos = {"input": [], "output": [], "assistant_mask": []}
 
         for prompt_ids_len, input_id, attention_mask, info in item_list:
             prompt_ids_lens.append(prompt_ids_len)
@@ -154,6 +170,7 @@ class SFTDataset(Dataset):
             attention_masks.append(attention_mask)
             infos["input"].append(info["input"])
             infos["output"].append(info["output"])
+            infos["assistant_mask"].append(info["assistant_mask"])
 
         input_ids = zero_pad_sequences(input_ids, "right", self.tokenizer.pad_token_id)
         attention_masks = zero_pad_sequences(attention_masks, "right")
@@ -163,7 +180,7 @@ class SFTDataset(Dataset):
         packed_input_ids = []
         packed_attention_masks = []
         prompt_ids_lens = []
-        infos = {"input_length": []}
+        infos = {"input_length": [], "assistant_mask": []}
 
         index = 1
         for prompt_ids_len, input_id, attention_mask, info in item_list:
@@ -171,10 +188,14 @@ class SFTDataset(Dataset):
             packed_attention_masks.append(torch.full_like(input_id.flatten(), index))
             prompt_ids_lens.append(prompt_ids_len)
             infos["input_length"].append(info["input_length"])
+            if info["assistant_mask"] is not None:
+                infos["assistant_mask"].append(torch.tensor(info["assistant_mask"]).flatten())
             index += 1
 
         packed_input_ids = torch.cat(packed_input_ids, dim=0).unsqueeze(0)
         packed_attention_masks = torch.cat(packed_attention_masks, dim=0).unsqueeze(0)
+        if len(infos["assistant_mask"]) > 0:
+            infos["assistant_mask"] = torch.cat(infos["assistant_mask"], dim=0).unsqueeze(0)
 
         if (
             self.multiple_of > 1 and packed_input_ids.numel() % self.multiple_of != 0
@@ -182,5 +203,7 @@ class SFTDataset(Dataset):
             padding_len = self.multiple_of - (packed_input_ids.numel() % self.multiple_of)
             packed_input_ids = F.pad(packed_input_ids, (0, padding_len), value=self.tokenizer.pad_token_id)
             packed_attention_masks = F.pad(packed_attention_masks, (0, padding_len), value=0)
+            if len(infos["assistant_mask"]) > 0:
+                infos["assistant_mask"] = F.pad(infos["assistant_mask"], (0, padding_len), value=0)
 
         return prompt_ids_lens, packed_input_ids, packed_attention_masks, infos
