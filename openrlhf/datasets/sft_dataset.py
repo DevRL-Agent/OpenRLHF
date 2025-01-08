@@ -25,13 +25,13 @@ def preprocess_data(data, input_template=None, input_key="input", output_key=Non
 
             prompt = apply_chat_template(prompt_message, tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
             full_response = apply_chat_template(prompt_message + (response_message or []), tokenize=False, return_assistant_tokens_mask=True)
-            response = full_response[0][len(prompt[0]):]
-            assistant_mask = full_response[1][len(prompt[0]):]
+            response = full_response[0][len(prompt):]
+            assistant_mask = full_response[1][len(prompt):]
         else:
             prompt = apply_chat_template(data[input_key][:-1], tokenize=False, add_generation_prompt=True, return_assistant_tokens_mask=True)
             full_response = apply_chat_template(data[input_key], tokenize=False, return_assistant_tokens_mask=True)
-            response = full_response[0][len(prompt[0]):]
-            assistant_mask = full_response[1][len(prompt[0]):]
+            response = full_response[0][len(prompt):]
+            assistant_mask = full_response[1][len(prompt):]
     else:
         prompt = data[input_key]
         if input_template:
