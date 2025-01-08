@@ -109,7 +109,9 @@ class SFTDataset(Dataset):
                 # Re-apply templates with tokenization to get masks
                 prompt_with_mask = self.apply_chat_template(data[self.input_key], tokenize=True, add_generation_prompt=True, return_assistant_tokens_mask=True)
                 full_with_mask = self.apply_chat_template(data[self.input_key] + (data[self.output_key] or []), tokenize=True, return_assistant_tokens_mask=True)
-                assistant_mask = full_with_mask[1][len(prompt_with_mask[1]):]
+                # When multiturn is true, full_with_mask should be exactly the same as prompt_with_mask
+                assert prompt_with_mask == full_with_mask, "With multiturn enabled, full_with_mask must be exactly the same as prompt_with_mask"
+                assistant_mask = full_with_mask[1][len(prompt_with_mask[1]):]  # This should be empty/None based on the assertion above
 
             prompt_token = self.tokenizer(
                 prompt,
